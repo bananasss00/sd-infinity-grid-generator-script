@@ -141,6 +141,8 @@ def try_init():
     registerMode("Styles", GridSettingMode(dry=True, type="text", apply=apply_styles, valid_list=lambda: list(shared.prompt_styles.styles)))
     registerMode("Var Seed", GridSettingMode(dry=True, type="integer", apply=apply_field("subseed")))
     registerMode("Var Strength", GridSettingMode(dry=True, type="decimal", min=0, max=1, apply=apply_field("subseed_strength")))
+    # TODO: VladFork
+    # registerMode("ClipSkip", GridSettingMode(dry=True, type="integer", min=1, max=12, apply=apply_field("clip_skip")))
     registerMode("ClipSkip", GridSettingMode(dry=False, type="integer", min=1, max=12, apply=apply_setting_override("CLIP_stop_at_last_layers")))
     registerMode("Denoising", GridSettingMode(dry=True, type="decimal", min=0, max=1, apply=apply_field("denoising_strength")))
     registerMode("ETA", GridSettingMode(dry=True, type="decimal", min=0, max=1, apply=apply_field("eta")))
@@ -241,24 +243,29 @@ def a1111_grid_runner_post_dry_hook(grid_runner: core.GridRunner, p, set):
     p.subseed = processing.get_fixed_seed(p.subseed)
     processed = process_images(p)
     if len(processed.images) < 1:
-        raise RuntimeError(f"Something went wrong! Image gen '{set.data}' produced {len(processed.images)} images, which is wrong")
-    os.makedirs(os.path.dirname(set.filepath), exist_ok=True)
-    result_index = getattr(p, 'inf_grid_use_result_index', 0)
-    if result_index >= len(processed.images):
-        result_index = len(processed.images) - 1
-    img = processed.images[result_index]
-    if type(img) == numpy.ndarray:
-        img = Image.fromarray(img)
-    if hasattr(p, 'inf_grid_out_width') and hasattr(p, 'inf_grid_out_height'):
-        img = img.resize((p.inf_grid_out_width, p.inf_grid_out_height), resample=images.LANCZOS)
-    processed.images[result_index] = img
-    info = processing.create_infotext(p, [p.prompt], [p.seed], [p.subseed], [])
-    ext = grid_runner.grid.format
-    prompt = p.prompt
-    seed = processed.seed
-    def save_offthread():
-        images.save_image(img, path=os.path.dirname(set.filepath), basename="", forced_filename=os.path.basename(set.filepath), save_to_dirs=False, info=info, extension=ext, p=p, prompt=prompt, seed=seed)
-    threading.Thread(target=save_offthread).start()
+        raise RuntimeError(f"Something went wrong! Image gen '{'; '.join([s.data for s in set])}' produced {len(processed.images)} images, which is wrong")
+    for i in range(len(set)):
+        os.makedirs(os.path.dirname(set[i].filepath), exist_ok=True)
+    # result_index = getattr(p, 'inf_grid_use_result_index', 0)
+    # if result_index >= len(processed.images):
+    #     result_index = len(processed.images) - 1
+    # img = processed.images[result_index]
+    for i, img in enumerate(processed.images):
+        if type(img) == numpy.ndarray:
+            img = Image.fromarray(img)
+        if hasattr(p, 'inf_grid_out_width') and hasattr(p, 'inf_grid_out_height'):
+            img = img.resize((p.inf_grid_out_width, p.inf_grid_out_height), resample=images.LANCZOS)
+        processed.images[i] = img
+        # processed.images[result_index] = img
+        info = processing.create_infotext(p, [p.prompt], [p.seed], [p.subseed], [])
+        ext = grid_runner.grid.format
+        prompt = p.prompt
+        seed = processed.seed
+        def save_offthread():
+            images.save_image(img, path=os.path.dirname(set[i].filepath), basename="", forced_filename=os.path.basename(set[i].filepath), save_to_dirs=False, info=info, extension=ext, p=p, prompt=prompt, seed=seed)
+        threading.Thread(target=save_offthread).start()
+    
+    # todo: test this params, test model change
     opts.code_former_weight = grid_runner.temp.old_codeformer_weight
     opts.face_restoration_model = grid_runner.temp.old_face_restorer
     opts.sd_vae = grid_runner.temp.old_vae
@@ -412,7 +419,7 @@ class Script(scripts.Script):
         # Clean up default params
         p = copy(p)
         p.n_iter = 1
-        p.batch_size = 1
+        # p.batch_size = 1
         p.do_not_save_samples = True
         p.do_not_save_grid = True
         p.seed = processing.get_fixed_seed(p.seed)

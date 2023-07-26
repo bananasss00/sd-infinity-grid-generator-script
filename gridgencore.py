@@ -3,7 +3,11 @@
 import os, glob, yaml, json, shutil, math, re, time
 from copy import copy
 from PIL import Image
+from batch_helper import BatchHelper
 from git import Repo
+from modules import sd_models, shared
+from modules.shared import opts
+from tqdm import tqdm
 
 ######################### Core Variables #########################
 
@@ -13,6 +17,7 @@ EXTRA_ASSETS = []
 VERSION = None
 valid_modes = {}
 IMAGES_CACHE = None
+BATCH_HELPER = BatchHelper()
 
 ######################### Hooks #########################
 
@@ -403,13 +408,23 @@ class SingleGridCall:
                 if grid_call_param_add_hook is None or not grid_call_param_add_hook(self, p, v):
                     self.params[p] = v
 
-    def apply_to(self, p, dry: bool):
-        for name, val in self.params.items():
-            mode = valid_modes[clean_mode(name)]
-            if not dry or mode.dry:
-                mode.apply(p, val)
-        if grid_call_apply_hook is not None:
-            grid_call_apply_hook(self, p, dry)
+    def apply_to(self, p, dry: bool, late_run: bool):
+        if not late_run:
+            for name, val in self.params.items():
+                # print(f'name: {name}')
+                mode = valid_modes[clean_mode(name)]
+                if not dry or mode.dry:
+                    if not BATCH_HELPER.apply_to_hook(p, name, val):
+                        mode.apply(p, val)
+
+            if grid_call_apply_hook is not None:
+                grid_call_apply_hook(self, p, dry)
+
+        else:
+            for name, val in BATCH_HELPER.laterun().get(p, {}):
+                mode = valid_modes[clean_mode(name)]
+                if not dry or mode.dry:
+                    mode.apply(p, val)
 
 class GridRunner:
     def __init__(self, grid: GridFileHelper, do_overwrite: bool, base_path: str, p, fast_skip: bool):
@@ -476,25 +491,44 @@ class GridRunner:
             grid_runner_pre_run_hook(self)
         iteration = 0
         last = None
+        prompts = []
+        sets = {}
+        max_batch_size = self.grid.read_grid_direct('max batch size') or None
+        print(f'Max batch size = {max_batch_size}')
         for set in self.value_sets:
             if set.do_skip:
                 continue
-            iteration += 1
-            if not dry:
-                print(f'On {iteration}/{self.total_run} ... Set: {set.data}, file {set.filepath}')
             p = copy(self.p)
-            if grid_runner_pre_dry_hook is not None:
-                grid_runner_pre_dry_hook(self)
-            set.apply_to(p, dry)
-            if dry:
-                continue
-            try:
-                last = grid_runner_post_dry_hook(self, p, set)
-            except FileNotFoundError as e:
-                if e.strerror == 'The filename or extension is too long' and hasattr(e, 'winerror') and e.winerror == 206:
-                    print(f"\n\n\nOS Error: {e.strerror} - see this article to fix that: https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/The-Windows-10-default-path-length-limitation-MAX-PATH-is-256-characters.html \n\n\n")
-                raise e
-            self.update_live_file(set.filepath + "." + self.grid.format)
+            set.apply_to(p, dry, late_run=False)
+            prompts.append(p)
+            sets[p] = set
+
+        if not dry:
+            m_prompts, m_sets = BATCH_HELPER.group_batches(prompts, sets, max_batch_size=max_batch_size, debug_batch=self.grid.read_grid_direct('debug batch') or False)
+            pbar = tqdm(total=len(m_prompts))
+            for p in m_prompts:
+                if grid_runner_pre_dry_hook is not None:
+                    grid_runner_pre_dry_hook(self)
+                
+                m_sets[p][0].apply_to(p, dry, late_run=True)
+
+                iteration += len(p.prompt) if isinstance(p.prompt, list) else 1
+                print(f'On {iteration}/{self.total_run} ... Set: {m_sets[p][0].data}, file {m_sets[p][0].filepath}')
+                pbar.update()
+
+                try:
+                    last = grid_runner_post_dry_hook(self, p, m_sets[p])
+                except FileNotFoundError as e:
+                    if e.strerror == 'The filename or extension is too long' and hasattr(e, 'winerror') and e.winerror == 206:
+                        print(f"\n\n\nOS Error: {e.strerror} - see this article to fix that: https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/The-Windows-10-default-path-length-limitation-MAX-PATH-is-256-characters.html \n\n\n")
+                    raise e
+                for set in m_sets[p]:
+                    self.update_live_file(set.filepath + "." + self.grid.format)
+
+            pbar.close()
+                    
+        BATCH_HELPER.cleanup()
+        
         return last
 
 ######################### Web Data Builders #########################
