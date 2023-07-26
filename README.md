@@ -2,7 +2,7 @@
 ### Batching support
 
 1) Batch mode support has been added. The maximum package size is taken from the YAML config file "grid->max batch size" (refer to assets/short_example.yml). If this parameter is not specified, then the maximum package size will be equal to the "Batch size" parameter in the WebUI. Packages are divided based on the seed, prompt, and negative_prompt parameters. However, prompts that contain different extra netwroks(lora, hypernetwork, etc..) or their weights cannot be grouped together.
-2) The generation order has also been changed. First, generation will be done using models, then using VAE (Variational Autoencoder), and finally using extra networks in the prompt <lora:name:weight>.
+2) The generation order has also been changed. First, generation will be done using models, then using VAE, and finally using extra networks in the prompt <lora:name:weight>.
 
 # Stable Diffusion Infinity Grid Generator
 
