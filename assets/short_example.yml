@@ -33,6 +33,7 @@ grid:
     # png makes bigger file sizes, at better quality
     format: jpg
     # Optionally, also specify default choices for the webpage.
+    max batch size: 4
     show descriptions: true
     autoscale: false
     sticky: false
